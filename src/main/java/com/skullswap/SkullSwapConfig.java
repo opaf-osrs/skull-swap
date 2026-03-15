@@ -19,10 +19,10 @@ public interface SkullSwapConfig extends Config
 		return SkullMode.OFF;
 	}
 
-	@Range(min = 1, max = 16)
+	@Range(min = 1, max = 25)
 	@ConfigItem(
 		keyName = "selectedSkull",
-		name = "Selected skull (1–16)",
+		name = "Selected skull (1–25)",
 		description = "Which skull image to use in Replace and Manual modes",
 		position = 1
 	)
@@ -41,5 +41,17 @@ public interface SkullSwapConfig extends Config
 	default int randomChance()
 	{
 		return 50;
+	}
+
+	@Range(min = 0, max = 80)
+	@ConfigItem(
+		keyName = "skullZOffset",
+		name = "Skull Z offset",
+		description = "Vertical offset (in game units) used to position the custom skull over the player's head. Increase if the skull appears too low.",
+		position = 3
+	)
+	default int skullZOffset()
+	{
+		return 40;
 	}
 }

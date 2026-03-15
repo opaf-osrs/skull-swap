@@ -8,9 +8,14 @@ import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.Player;
 import net.runelite.api.WorldView;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.MenuOpened;
 import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.PlayerChanged;
+import net.runelite.api.events.PlayerDespawned;
+import net.runelite.api.events.PlayerSpawned;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.menus.MenuManager;
@@ -37,8 +42,8 @@ public class SkullSwapPlugin extends Plugin
 {
 	private static final String ASSIGN_OPTION = "Assign skull";
 	private static final String REMOVE_OPTION = "Remove skull";
-
 	private static final String CONFIG_GROUP = "skullswap";
+	private static final int SKULL_COUNT = 25;
 
 	@Inject private Client client;
 	@Inject private ConfigManager configManager;
@@ -49,25 +54,29 @@ public class SkullSwapPlugin extends Plugin
 
 	private final Random random = new Random();
 
-	/** The 16 custom skull images, loaded from /skulls/skull_01.png … skull_16.png. */
-	final BufferedImage[] skullImages = new BufferedImage[16];
+	/** Custom skull images loaded from /skulls/skull_01.png … skull_25.png. */
+	final BufferedImage[] skullImages = new BufferedImage[SKULL_COUNT];
 
 	/**
-	 * Skull index (0–15) assigned for the whole session in REPLACE_RANDOM mode.
-	 * Re-randomised on each LOGGED_IN transition.
+	 * Ground-truth skull state tracked from network events BEFORE our per-tick
+	 * setSkullIcon(-1) interference. player name → native skull icon value.
+	 * Only contains players who actually have a skull.
 	 */
+	final Map<String, Integer> realSkulledPlayers = new HashMap<>();
+
+	/** Skull index (0–24) for the whole session in REPLACE_RANDOM mode. Re-rolled on LOGGED_IN. */
 	int sessionSkullIndex = 0;
 
 	/**
 	 * Stable cosmetic skull assignments for RANDOM_COSMETIC mode.
-	 * player name → skull index (0–15) or -1 (no cosmetic skull assigned).
+	 * player name → skull index (0–24) or -1 (no cosmetic skull assigned this session).
 	 * Cleared on LOGGED_IN.
 	 */
 	final Map<String, Integer> randomAssignments = new HashMap<>();
 
 	/**
 	 * Manual skull assignments for MANUAL mode.
-	 * player name → skull index (0–15).
+	 * player name → skull index (0–24).
 	 * Cleared on LOGIN_SCREEN.
 	 */
 	final Map<String, Integer> manualAssignments = new HashMap<>();
@@ -83,29 +92,36 @@ public class SkullSwapPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
-		// ConfigPanel.createComboBox calls Enum.valueOf(type, configManager.getConfiguration(...))
-		// with no null-guard. If no value is stored yet (first run) that's an NPE.
-		// Seed the default so getConfiguration never returns null for enum config items.
+		// Seed default so getConfiguration never returns null for enum config items.
 		if (configManager.getConfiguration(CONFIG_GROUP, "mode") == null)
 		{
 			configManager.setConfiguration(CONFIG_GROUP, "mode", SkullMode.OFF.name());
 		}
 
 		int loaded = 0;
-		for (int i = 0; i < 16; i++)
+		for (int i = 0; i < SKULL_COUNT; i++)
 		{
 			String path = "/skulls/skull_" + String.format("%02d", i + 1) + ".png";
 			try
 			{
-				skullImages[i] = ImageUtil.loadImageResource(getClass(), path);
-				if (skullImages[i] != null) loaded++;
+				BufferedImage img = ImageUtil.loadImageResource(getClass(), path);
+				if (img != null)
+				{
+					// Palette/indexed PNGs must be converted to TYPE_INT_ARGB or
+					// transparency won't render correctly.
+					BufferedImage argb = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_ARGB);
+					argb.getGraphics().drawImage(img, 0, 0, null);
+					skullImages[i] = argb;
+					loaded++;
+				}
 			}
 			catch (Exception e)
 			{
 				log.warn("SkullSwap: failed to load {}", path, e);
 			}
 		}
-		log.info("SkullSwap: loaded {}/16 skull images", loaded);
+		log.info("SkullSwap: loaded {}/{} skull images", loaded, SKULL_COUNT);
+
 		menuManager.get().addPlayerMenuItem(ASSIGN_OPTION);
 		overlayManager.add(overlay);
 	}
@@ -116,6 +132,8 @@ public class SkullSwapPlugin extends Plugin
 		menuManager.get().removePlayerMenuItem(ASSIGN_OPTION);
 		menuManager.get().removePlayerMenuItem(REMOVE_OPTION);
 		overlayManager.remove(overlay);
+		restoreSkullIcons();
+		realSkulledPlayers.clear();
 		randomAssignments.clear();
 		manualAssignments.clear();
 		sessionSkullIndex = 0;
@@ -124,24 +142,115 @@ public class SkullSwapPlugin extends Plugin
 	// ── Events ────────────────────────────────────────────────────────────────
 
 	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (!CONFIG_GROUP.equals(event.getGroup())) return;
+		if ("mode".equals(event.getKey()) && config.mode() == SkullMode.OFF)
+		{
+			restoreSkullIcons();
+		}
+	}
+
+	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
 		if (event.getGameState() == GameState.LOGGED_IN)
 		{
-			sessionSkullIndex = random.nextInt(16);
+			sessionSkullIndex = random.nextInt(SKULL_COUNT);
 			randomAssignments.clear();
+			realSkulledPlayers.clear();
 		}
 		else if (event.getGameState() == GameState.LOGIN_SCREEN)
 		{
 			randomAssignments.clear();
 			manualAssignments.clear();
+			realSkulledPlayers.clear();
 			sessionSkullIndex = 0;
 		}
 	}
 
 	/**
+	 * Track real skull state from network data BEFORE we interfere with setSkullIcon.
+	 * PlayerSpawned fires when a player enters the scene — read their native skull here.
+	 */
+	@Subscribe
+	public void onPlayerSpawned(PlayerSpawned event)
+	{
+		trackPlayerSkull(event.getPlayer());
+	}
+
+	/**
+	 * PlayerChanged fires when the server sends an update for an existing player,
+	 * including skull changes. This is the ground-truth update we rely on.
+	 */
+	@Subscribe
+	public void onPlayerChanged(PlayerChanged event)
+	{
+		trackPlayerSkull(event.getPlayer());
+	}
+
+	@Subscribe
+	public void onPlayerDespawned(PlayerDespawned event)
+	{
+		Player player = event.getPlayer();
+		if (player.getName() != null)
+		{
+			realSkulledPlayers.remove(player.getName());
+		}
+	}
+
+	private void trackPlayerSkull(Player player)
+	{
+		if (player.getName() == null) return;
+		int icon = player.getSkullIcon();
+		if (icon != -1)
+		{
+			realSkulledPlayers.put(player.getName(), icon);
+		}
+		else
+		{
+			realSkulledPlayers.remove(player.getName());
+		}
+	}
+
+	/**
+	 * Hide native skulls every tick. Must be called every tick because the game
+	 * resets skullIcon from network data constantly. setSkullIcon(-1) is the ONLY
+	 * method confirmed to work — getSpriteOverrides does NOT affect skull rendering.
+	 */
+	@Subscribe
+	public void onGameTick(GameTick event)
+	{
+		if (config.mode() == SkullMode.OFF) return;
+		WorldView wv = client.getTopLevelWorldView();
+		if (wv == null) return;
+
+		for (Player player : wv.players())
+		{
+			if (player != null && player.getSkullIcon() != -1)
+			{
+				player.setSkullIcon(-1);
+			}
+		}
+	}
+
+	/** Restore real skull icons for all visible players — called on shutdown or mode → OFF. */
+	private void restoreSkullIcons()
+	{
+		WorldView wv = client.getTopLevelWorldView();
+		if (wv == null) return;
+
+		for (Player player : wv.players())
+		{
+			if (player == null || player.getName() == null) continue;
+			Integer original = realSkulledPlayers.get(player.getName());
+			player.setSkullIcon(original != null ? original : -1);
+		}
+	}
+
+	/**
 	 * Conditionally injects "Remove skull" when right-clicking a player who already
-	 * has a manual assignment. "Assign skull" is always present via MenuManager.
+	 * has a manual assignment.
 	 */
 	@Subscribe
 	public void onMenuOpened(MenuOpened event)
@@ -174,7 +283,6 @@ public class SkullSwapPlugin extends Plugin
 	{
 		String option = event.getMenuOption();
 
-		// "Assign skull" — added by MenuManager, type is RUNELITE_PLAYER, getPlayer() works.
 		if (ASSIGN_OPTION.equals(option) && event.getMenuAction() == MenuAction.RUNELITE_PLAYER)
 		{
 			if (config.mode() != SkullMode.MANUAL) return;
@@ -187,7 +295,6 @@ public class SkullSwapPlugin extends Plugin
 			return;
 		}
 
-		// "Remove skull" — added by onMenuOpened, type is RUNELITE, use target string.
 		if (REMOVE_OPTION.equals(option) && event.getMenuAction() == MenuAction.RUNELITE)
 		{
 			String name = Text.removeTags(event.getMenuTarget()).trim();
@@ -202,6 +309,9 @@ public class SkullSwapPlugin extends Plugin
 	/**
 	 * Returns the custom skull image to draw for the given player, or null if none.
 	 * Called by {@link SkullSwapOverlay} each frame.
+	 *
+	 * Uses realSkulledPlayers (not player.getSkullIcon()) for REPLACE modes because
+	 * we set skullIcon to -1 ourselves every tick — the field is no longer reliable.
 	 */
 	BufferedImage getSkullForPlayer(Player player)
 	{
@@ -211,11 +321,11 @@ public class SkullSwapPlugin extends Plugin
 		switch (config.mode())
 		{
 			case REPLACE_SINGLE:
-				if (player.getSkullIcon() == -1) return null;
+				if (!realSkulledPlayers.containsKey(name)) return null;
 				return safeGet(config.selectedSkull() - 1);
 
 			case REPLACE_RANDOM:
-				if (player.getSkullIcon() == -1) return null;
+				if (!realSkulledPlayers.containsKey(name)) return null;
 				return safeGet(sessionSkullIndex);
 
 			case RANDOM_COSMETIC:
@@ -223,9 +333,8 @@ public class SkullSwapPlugin extends Plugin
 				if (name == null) return null;
 				if (!randomAssignments.containsKey(name))
 				{
-					// Roll once per session; -1 means "no cosmetic skull"
 					int idx = (random.nextInt(100) < config.randomChance())
-						? random.nextInt(16)
+						? random.nextInt(SKULL_COUNT)
 						: -1;
 					randomAssignments.put(name, idx);
 				}

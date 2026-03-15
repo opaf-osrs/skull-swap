@@ -17,18 +17,10 @@ import java.awt.image.BufferedImage;
 public class SkullSwapOverlay extends Overlay
 {
 	/**
-	 * Extra height (in game units) added above the player's logical height to
-	 * position the custom skull sprite. Tune in-game so our skull precisely
-	 * covers the native skull. Start at 30 and adjust up/down.
-	 */
-	static final int SKULL_Z_OFFSET = 30;
-
-	/**
 	 * Additional world-space offset when the player also has an overhead prayer active.
-	 * The prayer icon occupies screen space below the skull, so we need to push the
-	 * skull higher to clear it. Tune in-game; ~25 is a good starting point.
+	 * The prayer icon occupies screen space below the skull, so we push the skull higher.
 	 */
-	static final int PRAYER_OVERHEAD_EXTRA = 25;
+	private static final int PRAYER_OVERHEAD_EXTRA = 25;
 
 	private final Client client;
 	private final SkullSwapPlugin plugin;
@@ -40,14 +32,16 @@ public class SkullSwapOverlay extends Overlay
 		this.client = client;
 		this.plugin = plugin;
 		this.config = config;
-		setLayer(OverlayLayer.ABOVE_SCENE);
+		// ALWAYS_ON_TOP renders after the native skull — required to cover it.
+		// ABOVE_SCENE renders before it and cannot cover it.
+		setLayer(OverlayLayer.ALWAYS_ON_TOP);
 		setPosition(OverlayPosition.DYNAMIC);
 	}
 
 	@Override
 	public Dimension render(Graphics2D graphics)
 	{
-		if (config.mode() == SkullMode.OFF) return null;
+		if (config.mode() == SkullMode.OFF || config.mode() == SkullMode.HIDE) return null;
 		if (client.getGameState() != GameState.LOGGED_IN) return null;
 
 		WorldView wv = client.getTopLevelWorldView();
@@ -60,7 +54,7 @@ public class SkullSwapOverlay extends Overlay
 			BufferedImage skull = plugin.getSkullForPlayer(player);
 			if (skull == null) continue;
 
-			int zOffset = player.getLogicalHeight() + SKULL_Z_OFFSET;
+			int zOffset = player.getLogicalHeight() + config.skullZOffset();
 			if (player.getOverheadIcon() != null)
 			{
 				zOffset += PRAYER_OVERHEAD_EXTRA;
