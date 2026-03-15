@@ -134,7 +134,7 @@ public class SkullSwapPlugin extends Plugin
 		{
 			restoreSkullIcons();
 		}
-		if ("useCustomSkulls".equals(event.getKey()))
+		if ("useCustomSkulls".equals(event.getKey()) || "selectedCustomSkull".equals(event.getKey()))
 		{
 			loadSkullImages();
 		}
@@ -351,11 +351,13 @@ public class SkullSwapPlugin extends Plugin
 		if (player == null) return null;
 		String name = player.getName();
 
+		int selected = config.useCustomSkulls() ? config.selectedCustomSkull() : config.selectedSkull();
+
 		switch (config.mode())
 		{
 			case REPLACE_SINGLE:
 				if (!realSkulledPlayers.containsKey(name)) return null;
-				return safeGet(config.selectedSkull() - 1);
+				return safeGet(selected - 1);
 
 			case REPLACE_RANDOM:
 				if (!realSkulledPlayers.containsKey(name)) return null;

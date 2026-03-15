@@ -33,11 +33,23 @@ public interface SkullSwapConfig extends Config
 	@Range(min = 1, max = 25)
 	@ConfigItem(
 		keyName = "selectedSkull",
-		name = "Selected skull (1–25)",
-		description = "Which skull image to use in Replace and Manual modes",
+		name = "Selected skull — built-in (1–25)",
+		description = "Which built-in skull image to use in Replace and Manual modes",
 		position = 2
 	)
 	default int selectedSkull()
+	{
+		return 1;
+	}
+
+	@Range(min = 1, max = 25)
+	@ConfigItem(
+		keyName = "selectedCustomSkull",
+		name = "Selected skull — custom (1–25)",
+		description = "Which custom skull image to use in Replace and Manual modes (only used when 'Use custom skulls' is enabled)",
+		position = 3
+	)
+	default int selectedCustomSkull()
 	{
 		return 1;
 	}
@@ -47,7 +59,7 @@ public interface SkullSwapConfig extends Config
 		keyName = "randomChance",
 		name = "Random chance (%)",
 		description = "Percentage of nearby players that receive a cosmetic skull in Random Cosmetic mode",
-		position = 3
+		position = 4
 	)
 	default int randomChance()
 	{
@@ -59,7 +71,7 @@ public interface SkullSwapConfig extends Config
 		keyName = "skullZOffset",
 		name = "Skull Z offset",
 		description = "Vertical offset (in game units) used to position the custom skull over the player's head. Increase if the skull appears too low.",
-		position = 4
+		position = 5
 	)
 	default int skullZOffset()
 	{
