@@ -52,6 +52,6 @@ public interface SkullSwapConfig extends Config
 	)
 	default int skullZOffset()
 	{
-		return 40;
+		return 20;
 	}
 }
