@@ -22,12 +22,15 @@ import net.runelite.client.menus.MenuManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.RuneLite;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.Text;
 
+import javax.imageio.ImageIO;
 import javax.inject.Inject;
 import javax.inject.Provider;
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
@@ -44,6 +47,9 @@ public class SkullSwapPlugin extends Plugin
 	private static final String REMOVE_OPTION = "Remove skull";
 	private static final String CONFIG_GROUP = "skullswap";
 	private static final int SKULL_COUNT = 25;
+
+	/** Folder where users drop their own skull PNGs: ~/.runelite/skullswap/skull_01.png … */
+	static final File CUSTOM_SKULL_DIR = new File(RuneLite.RUNELITE_DIR, "skullswap");
 
 	@Inject private Client client;
 	@Inject private ConfigManager configManager;
@@ -98,29 +104,8 @@ public class SkullSwapPlugin extends Plugin
 			configManager.setConfiguration(CONFIG_GROUP, "mode", SkullMode.OFF.name());
 		}
 
-		int loaded = 0;
-		for (int i = 0; i < SKULL_COUNT; i++)
-		{
-			String path = "/skulls/skull_" + String.format("%02d", i + 1) + ".png";
-			try
-			{
-				BufferedImage img = ImageUtil.loadImageResource(getClass(), path);
-				if (img != null)
-				{
-					// Palette/indexed PNGs must be converted to TYPE_INT_ARGB or
-					// transparency won't render correctly.
-					BufferedImage argb = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_ARGB);
-					argb.getGraphics().drawImage(img, 0, 0, null);
-					skullImages[i] = argb;
-					loaded++;
-				}
-			}
-			catch (Exception e)
-			{
-				log.warn("SkullSwap: failed to load {}", path, e);
-			}
-		}
-		log.info("SkullSwap: loaded {}/{} skull images", loaded, SKULL_COUNT);
+		loadSkullImages();
+		CUSTOM_SKULL_DIR.mkdirs();
 
 		menuManager.get().addPlayerMenuItem(ASSIGN_OPTION);
 		overlayManager.add(overlay);
@@ -148,6 +133,10 @@ public class SkullSwapPlugin extends Plugin
 		if ("mode".equals(event.getKey()) && config.mode() == SkullMode.OFF)
 		{
 			restoreSkullIcons();
+		}
+		if ("useCustomSkulls".equals(event.getKey()))
+		{
+			loadSkullImages();
 		}
 	}
 
@@ -232,6 +221,50 @@ public class SkullSwapPlugin extends Plugin
 				player.setSkullIcon(-1);
 			}
 		}
+	}
+
+	/** Loads skull images from the custom folder or the built-in jar resources. */
+	void loadSkullImages()
+	{
+		boolean custom = config.useCustomSkulls();
+		int loaded = 0;
+		for (int i = 0; i < SKULL_COUNT; i++)
+		{
+			String filename = "skull_" + String.format("%02d", i + 1) + ".png";
+			try
+			{
+				BufferedImage img = null;
+				if (custom)
+				{
+					File f = new File(CUSTOM_SKULL_DIR, filename);
+					if (f.exists())
+					{
+						img = ImageIO.read(f);
+					}
+				}
+				if (img == null)
+				{
+					img = ImageUtil.loadImageResource(getClass(), "/skulls/" + filename);
+				}
+				if (img != null)
+				{
+					BufferedImage argb = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_ARGB);
+					argb.getGraphics().drawImage(img, 0, 0, null);
+					skullImages[i] = argb;
+					loaded++;
+				}
+				else
+				{
+					skullImages[i] = null;
+				}
+			}
+			catch (Exception e)
+			{
+				skullImages[i] = null;
+				log.warn("SkullSwap: failed to load {}", filename, e);
+			}
+		}
+		log.info("SkullSwap: loaded {}/{} skull images ({})", loaded, SKULL_COUNT, custom ? "custom" : "built-in");
 	}
 
 	/** Restore real skull icons for all visible players — called on shutdown or mode → OFF. */

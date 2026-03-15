@@ -19,12 +19,23 @@ public interface SkullSwapConfig extends Config
 		return SkullMode.OFF;
 	}
 
+	@ConfigItem(
+		keyName = "useCustomSkulls",
+		name = "Use custom skulls",
+		description = "When enabled, loads skulls from the custom folder (~/.runelite/skullswap/) instead of the built-in set",
+		position = 1
+	)
+	default boolean useCustomSkulls()
+	{
+		return false;
+	}
+
 	@Range(min = 1, max = 25)
 	@ConfigItem(
 		keyName = "selectedSkull",
 		name = "Selected skull (1–25)",
 		description = "Which skull image to use in Replace and Manual modes",
-		position = 1
+		position = 2
 	)
 	default int selectedSkull()
 	{
@@ -36,7 +47,7 @@ public interface SkullSwapConfig extends Config
 		keyName = "randomChance",
 		name = "Random chance (%)",
 		description = "Percentage of nearby players that receive a cosmetic skull in Random Cosmetic mode",
-		position = 2
+		position = 3
 	)
 	default int randomChance()
 	{
@@ -48,7 +59,7 @@ public interface SkullSwapConfig extends Config
 		keyName = "skullZOffset",
 		name = "Skull Z offset",
 		description = "Vertical offset (in game units) used to position the custom skull over the player's head. Increase if the skull appears too low.",
-		position = 3
+		position = 4
 	)
 	default int skullZOffset()
 	{
